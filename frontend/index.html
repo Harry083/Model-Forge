@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Model Forge</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "/static/vendor/three/three.module.min.js",
+    "three/addons/": "/static/vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <span class="brand-mark">MF</span>
+      <span class="brand-text">Model Forge</span>
+    </a>
+    <nav class="primary-nav">
+      <ul>
+        <li><a href="https://harrylsmallwood.com/model-forge" target="_blank" rel="noopener">Guide</a></li>
+        <li><a class="nav-cta" href="https://github.com/Harry083/Frame-Guard" target="_blank" rel="noopener">GitHub ↗</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <p class="hero-eyebrow">TOOL‑006 · running locally, your photos never leave this machine</p>
+    <h1>Model Forge</h1>
+    <p class="lede">Walk around an object with your camera, then turn the photos or video into a 3D model. COLMAP works out where every shot was taken and builds a coloured mesh you can spin, measure up and export.</p>
+    <div class="env-chips" id="env-chips"><span class="chip">Checking tools…</span></div>
+  </section>
+
+  <section class="panel capture-panel">
+    <div class="panel-title">01 · Capture</div>
+    <div class="capture-head">
+      <h2>Photos &amp; videos <span class="hint">of one object, from all around it</span></h2>
+      <div class="capture-actions">
+        <button class="btn" id="add-files-btn" type="button"><span class="btn-icon" aria-hidden="true">+</span>Add files…</button>
+        <button class="btn" id="add-folder-btn" type="button">Add folder…</button>
+      </div>
+    </div>
+    <div class="path-input-row">
+      <input type="text" class="path-input" id="path-input" placeholder="…or paste a path to a photo, video or folder: C:\photos\mug" />
+      <button class="btn" id="path-add-btn" type="button">Add</button>
+    </div>
+    <div class="file-status" id="capture-status"></div>
+
+    <div class="media-grid" id="media-grid">
+      <div class="media-empty" id="media-empty">
+        <div class="media-empty-mark" aria-hidden="true">◎</div>
+        <p>No photos yet. Add 20–80 photos, a short video circling the object, or a mix of both.</p>
+      </div>
+    </div>
+    <div class="capture-summary" id="capture-summary"></div>
+
+    <details class="tips">
+      <summary>How to shoot for a good model</summary>
+      <ul>
+        <li><strong>Overlap.</strong> Move a small step between shots so each photo shares 60–80% with the last. For video, walk slowly.</li>
+        <li><strong>Go all the way round,</strong> ideally in two or three loops at different heights, plus a few from above.</li>
+        <li><strong>Fill the frame</strong> with the object, keep it sharp, and keep the zoom fixed.</li>
+        <li><strong>Even light, no flash.</strong> Overcast daylight is ideal. Shiny, transparent and plain single-colour surfaces are hard. A textured background (newspaper, a patterned cloth) helps small objects.</li>
+        <li><strong>Don't move the object</strong> between shots; move yourself instead. Turntables need a plain, featureless background.</li>
+      </ul>
+    </details>
+  </section>
+
+  <section class="panel controls-panel">
+    <div class="panel-title">02 · Build</div>
+    <div class="controls-grid">
+      <label class="field">
+        Name
+        <input type="text" id="name-input" class="text-input" placeholder="e.g. Ceramic mug" maxlength="80" />
+      </label>
+      <label class="field">
+        Quality
+        <select id="quality-select">
+          <option value="draft">Draft · fastest preview</option>
+          <option value="standard" selected>Standard</option>
+          <option value="high">High · slow, full detail</option>
+        </select>
+      </label>
+      <label class="field">
+        Frames per video
+        <select id="frames-select">
+          <option value="30">30 frames</option>
+          <option value="60" selected>60 frames</option>
+          <option value="120">120 frames</option>
+          <option value="200">200 frames</option>
+        </select>
+      </label>
+      <label class="field">
+        Matching
+        <select id="matcher-select">
+          <option value="auto" selected>Auto</option>
+          <option value="exhaustive">Every pair · most robust</option>
+          <option value="sequential">Neighbours · for long videos</option>
+        </select>
+      </label>
+      <label class="field">
+        Dense reconstruction
+        <select id="dense-select">
+          <option value="auto" selected>Auto · when CUDA is available</option>
+          <option value="on">On · needs NVIDIA GPU</option>
+          <option value="off">Off · sparse points only</option>
+        </select>
+      </label>
+      <label class="field">
+        Mesh method
+        <select id="mesher-select">
+          <option value="poisson" selected>Poisson · smooth, watertight</option>
+          <option value="delaunay">Delaunay · sharper edges (dense only)</option>
+        </select>
+      </label>
+    </div>
+    <div class="controls-row">
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="crop-check" checked /><span>Isolate the object</span></label>
+        <label class="toggle"><input type="checkbox" id="largest-check" checked /><span>Keep largest piece</span></label>
+        <label class="toggle"><input type="checkbox" id="keep-check" /><span>Keep working files</span></label>
+      </div>
+      <div class="run-actions">
+        <button id="cancel-btn" class="btn cancel-btn hidden" type="button">Cancel</button>
+        <button id="run-btn" class="btn btn-primary run-btn" type="button" disabled><span class="btn-icon" aria-hidden="true">▶</span>Build model</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="progress-section" class="panel progress-section hidden">
+    <div class="progress-top">
+      <div>
+        <div class="progress-stage" id="progress-stage">Starting…</div>
+        <div class="progress-label" id="progress-label"></div>
+      </div>
+      <div class="progress-pct" id="progress-pct">0%</div>
+    </div>
+    <div class="progress-bar-track">
+      <div id="progress-bar-fill" class="progress-bar-fill"></div>
+    </div>
+    <ol class="stage-list" id="stage-list"></ol>
+    <details class="raw-details log-details">
+      <summary>COLMAP log</summary>
+      <pre id="log-output"></pre>
+    </details>
+  </section>
+
+  <section id="error-section" class="error-section hidden"></section>
+
+  <section id="results-section" class="panel results-section hidden">
+    <div class="results-header">
+      <h2 id="results-title">Your model</h2>
+      <div class="report-actions">
+        <a id="report-html-link" class="btn btn-primary report-btn" target="_blank" rel="noopener"><span class="btn-icon" aria-hidden="true">↗</span>View Report</a>
+        <button id="report-pdf-btn" class="btn report-btn" type="button">Download PDF</button>
+        <button id="open-folder-btn" class="btn report-btn" type="button">Open folder</button>
+      </div>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <canvas id="viewer-canvas"></canvas>
+      <div class="viewer-toolbar">
+        <div class="seg" role="group" aria-label="Show">
+          <button type="button" class="seg-btn active" data-show="mesh">Mesh</button>
+          <button type="button" class="seg-btn" data-show="points">Points</button>
+        </div>
+        <div class="seg" role="group" aria-label="Shading">
+          <button type="button" class="seg-btn active" data-shade="color">Colour</button>
+          <button type="button" class="seg-btn" data-shade="clay">Clay</button>
+          <button type="button" class="seg-btn" data-shade="wire">Wire</button>
+        </div>
+        <button type="button" class="seg-btn solo" id="cameras-btn">Cameras</button>
+        <button type="button" class="seg-btn solo active" id="spin-btn">Spin</button>
+        <button type="button" class="seg-btn solo" id="reset-btn">Reset</button>
+      </div>
+      <div class="viewer-hint">Drag to orbit · right‑drag to pan · scroll to zoom</div>
+      <div class="viewer-loading" id="viewer-loading">Loading model…</div>
+    </div>
+
+    <div id="warnings"></div>
+
+    <div class="score-cards" id="score-cards"></div>
+
+    <div class="downloads">
+      <h3>Downloads</h3>
+      <div class="download-list" id="download-list"></div>
+      <p class="workspace-path mono" id="workspace-path"></p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>Model Forge · a <a href="https://harrylsmallwood.com/tools" target="_blank" rel="noopener">Harry Smallwood tool</a></span>
+    <span class="mono">127.0.0.1:8757</span>
+  </div>
+</footer>
+
+<div id="browse-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span id="browse-modal-title">Add photos or videos</span>
+      <button id="browse-modal-close" class="modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-toolbar">
+      <button id="browse-up-btn" class="btn" title="Up one level">&uarr; Up</button>
+      <span id="browse-current-path" class="current-path"></span>
+      <button id="browse-add-folder-btn" class="btn btn-primary" disabled>Add this folder</button>
+    </div>
+    <div id="browse-entries" class="browse-entries"></div>
+  </div>
+</div>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
