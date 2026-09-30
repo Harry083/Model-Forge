@@ -5,7 +5,6 @@ const state = {
   jobId: null,
   pollTimer: null,
   cuda: false,
-  browsePath: "",
   viewer: null,
 };
 
@@ -71,30 +70,73 @@ function formatElapsed(secs) {
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const fmtInt = (n) => (n === null || n === undefined ? "-" : Number(n).toLocaleString());
 
-async function apiJson(url, options = {}) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const e = new Error(err.detail || `Request failed (${res.status})`);
-    e.status = res.status;
-    throw e;
-  }
-  return res.json();
+// ---------- backend calls ----------
+// The page talks to Python directly through pywebview's bridge; there is no HTTP server or port.
+const bridgeReady = new Promise((resolve) => {
+  if (window.pywebview && window.pywebview.api) resolve();
+  else window.addEventListener("pywebviewready", resolve, { once: true });
+});
+
+async function api(method, ...args) {
+  await bridgeReady;
+  const res = await window.pywebview.api[method](...args);
+  if (!res || !res.ok) throw new Error((res && res.error) || `${method} failed`);
+  return res.data;
 }
 
-function postJson(url, body) {
-  return apiJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
+// An output file, fetched in base64 pieces and reassembled (a file:// page can't fetch it directly).
+async function readOutput(jobId, name) {
+  const parts = [];
+  let offset = 0;
+  let size = 0;
+  do {
+    const chunk = await api("model_chunk", jobId, name, offset);
+    const bin = atob(chunk.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    parts.push(bytes);
+    size = chunk.size;
+    if (chunk.end === offset) break; // file shrank underneath us
+    offset = chunk.end;
+  } while (offset < size);
+  return new Blob(parts).arrayBuffer();
+}
+
+// Thumbnails come back as data: URLs; a few at a time so a big folder doesn't start hundreds of ffmpegs.
+const thumbQueue = [];
+const thumbCache = new Map(); // path -> data: URL (the grid is rebuilt on every add/remove)
+let thumbsActive = 0;
+function queueThumb(img, path) {
+  if (thumbCache.has(path)) {
+    img.src = thumbCache.get(path);
+    return;
+  }
+  thumbQueue.push({ img, path });
+  pumpThumbs();
+}
+function pumpThumbs() {
+  while (thumbsActive < 4 && thumbQueue.length) {
+    const { img, path } = thumbQueue.shift();
+    if (!img.isConnected) continue;
+    thumbsActive++;
+    api("thumb", path)
+      .then((data) => {
+        thumbCache.set(path, data.src);
+        img.src = data.src;
+      })
+      .catch(() => img.remove())
+      .finally(() => {
+        thumbsActive--;
+        pumpThumbs();
+      });
+  }
 }
 
 // ---------- environment ----------
 async function loadHealth() {
   const chips = $("#env-chips");
   try {
-    const data = await apiJson("/api/health");
+    const data = await api("health");
     const c = data.colmap || {};
     state.cuda = !!c.cuda;
     const out = [];
@@ -116,7 +158,7 @@ async function loadHealth() {
     }
     syncMesherOptions();
   } catch (e) {
-    chips.innerHTML = `<span class="chip bad">Server not reachable</span>`;
+    chips.innerHTML = `<span class="chip bad">${escapeHtml(e.message)}</span>`;
   }
 }
 
@@ -144,7 +186,7 @@ async function addPaths(paths) {
   captureStatus.textContent = `Reading ${fresh.length} item${fresh.length === 1 ? "" : "s"}…`;
   captureStatus.className = "file-status";
   try {
-    const data = await postJson("/api/inspect", { paths: fresh });
+    const data = await api("inspect", fresh);
     const errors = data.items.filter((i) => i.kind === "error");
     state.items.push(...data.items.filter((i) => i.kind !== "error"));
     if (errors.length) {
@@ -181,7 +223,7 @@ function renderMedia() {
       inner = `<div><div class="folder-glyph" aria-hidden="true">▣</div>
         <div class="folder-count">${escapeHtml(parts.join(" · ") || "empty")}</div></div>`;
     } else {
-      inner = `<img loading="lazy" alt="" src="/api/thumb?path=${encodeURIComponent(item.path)}" />`;
+      inner = `<img alt="" />`;
       if (item.kind === "video") {
         inner += `<span class="media-badge">▶ ${escapeHtml(formatDuration(item.duration) || "video")}</span>`;
       }
@@ -189,10 +231,13 @@ function renderMedia() {
     inner += `<div class="media-caption">${escapeHtml(item.name)}</div>
       <button class="media-remove" type="button" aria-label="Remove ${escapeHtml(item.name)}">&times;</button>`;
     el.innerHTML = inner;
-    const img = el.querySelector("img");
-    if (img) img.addEventListener("error", () => img.remove());
     el.querySelector(".media-remove").addEventListener("click", () => removeItem(item.path));
     mediaGrid.appendChild(el);
+    const img = el.querySelector("img");
+    if (img) {
+      img.addEventListener("error", () => img.remove());
+      queueThumb(img, item.path);
+    }
   }
   renderSummary();
 }
@@ -250,8 +295,7 @@ function lastDir() {
   return last ? last.path : "";
 }
 
-// Add files / folder open the operating system's own dialog (shown by the local server, since a
-// web page can't learn a file's real path). If that isn't possible here, fall back to the in-page browser.
+// Add files / folder open the operating system's own dialog, attached to the app window.
 async function withButton(btn, busyLabel, fn) {
   const label = btn.innerHTML;
   btn.disabled = true;
@@ -259,12 +303,8 @@ async function withButton(btn, busyLabel, fn) {
   try {
     await fn();
   } catch (e) {
-    if (e.status === 501) {
-      openBrowse();
-    } else {
-      captureStatus.textContent = e.message;
-      captureStatus.className = "file-status err";
-    }
+    captureStatus.textContent = e.message;
+    captureStatus.className = "file-status err";
   } finally {
     btn.disabled = false;
     btn.innerHTML = label;
@@ -273,99 +313,16 @@ async function withButton(btn, busyLabel, fn) {
 
 $("#add-files-btn").addEventListener("click", (e) =>
   withButton(e.currentTarget, "Opening…", async () => {
-    const data = await postJson("/api/pick-files", { initial_path: lastDir() });
+    const data = await api("pick_files", lastDir());
     if (data.paths?.length) await addPaths(data.paths);
   })
 );
 $("#add-folder-btn").addEventListener("click", (e) =>
   withButton(e.currentTarget, "Opening…", async () => {
-    const data = await postJson("/api/pick-folder", { initial_path: lastDir() });
+    const data = await api("pick_folder", lastDir());
     if (data.path) await addPaths([data.path]);
   })
 );
-
-// ---------- fallback browse modal ----------
-const modal = $("#browse-modal");
-const browseEntries = $("#browse-entries");
-const browseCurrentPath = $("#browse-current-path");
-const browseUpBtn = $("#browse-up-btn");
-const browseAddFolderBtn = $("#browse-add-folder-btn");
-let browseParent = null;
-
-function parentOf(path) {
-  const trimmed = path.replace(/[\\/]+$/, "");
-  const idx = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return idx > 0 ? trimmed.substring(0, idx) : "";
-}
-
-function openBrowse() {
-  modal.classList.remove("hidden");
-  const last = lastDir();
-  loadBrowse(last ? (state.items[state.items.length - 1].kind === "folder" ? last : parentOf(last)) : "");
-}
-
-function closeBrowse() {
-  modal.classList.add("hidden");
-}
-$("#browse-modal-close").addEventListener("click", closeBrowse);
-modal.addEventListener("click", (e) => {
-  if (e.target === modal) closeBrowse();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !modal.classList.contains("hidden")) closeBrowse();
-});
-
-async function loadBrowse(path) {
-  browseEntries.innerHTML = `<div class="browse-entry"><span class="name">Loading…</span></div>`;
-  try {
-    const data = await apiJson(`/api/browse?path=${encodeURIComponent(path || "")}`);
-    state.browsePath = data.path;
-    browseParent = data.parent;
-    browseCurrentPath.textContent = data.path || "Drives";
-    browseUpBtn.disabled = !data.path;
-    browseAddFolderBtn.disabled = !data.media_count;
-    browseAddFolderBtn.textContent = data.media_count ? `Add this folder (${data.media_count})` : "Add this folder";
-
-    const added = new Set(state.items.map((i) => normPath(i.path)));
-    let html = "";
-    if (data.path) html += entryRow({ name: "..", path: data.parent ?? "", type: "dir" }, false);
-    for (const e of data.entries) html += entryRow(e, added.has(normPath(e.path)));
-    browseEntries.innerHTML = html || `<div class="browse-entry"><span class="name">(empty)</span></div>`;
-
-    browseEntries.querySelectorAll(".browse-entry[data-type='dir']").forEach((el) => {
-      el.addEventListener("click", () => loadBrowse(el.dataset.path));
-    });
-    browseEntries.querySelectorAll(".browse-entry[data-type='file']").forEach((el) => {
-      el.addEventListener("click", async () => {
-        el.classList.add("added");
-        await addPaths([el.dataset.path]);
-      });
-    });
-  } catch (e) {
-    browseEntries.innerHTML = `<div class="browse-entry"><span class="name">Error: ${escapeHtml(e.message)}</span></div>`;
-  }
-}
-
-function entryRow(entry, added) {
-  const icon = entry.type === "dir" ? "&#128193;" : entry.kind === "video" ? "&#127909;" : "&#128247;";
-  const meta = entry.type === "file"
-    ? `<span class="kind">${escapeHtml(entry.kind)}</span><span class="size">${formatBytes(entry.size)}</span>`
-    : "";
-  return `<div class="browse-entry${added ? " added" : ""}" data-type="${entry.type}" data-path="${escapeHtml(entry.path)}">
-    <span class="icon">${icon}</span>
-    <span class="name">${escapeHtml(entry.name)}</span>
-    ${meta}
-  </div>`;
-}
-
-browseUpBtn.addEventListener("click", () => {
-  if (state.browsePath) loadBrowse(browseParent ?? "");
-});
-browseAddFolderBtn.addEventListener("click", async () => {
-  if (!state.browsePath) return;
-  await addPaths([state.browsePath]);
-  closeBrowse();
-});
 
 // ---------- run ----------
 runBtn.addEventListener("click", startBuild);
@@ -373,7 +330,7 @@ cancelBtn.addEventListener("click", async () => {
   if (!state.jobId) return;
   cancelBtn.disabled = true;
   try {
-    await postJson(`/api/jobs/${state.jobId}/cancel`);
+    await api("cancel", state.jobId);
   } catch (e) {
     console.error(e);
   }
@@ -407,7 +364,7 @@ async function startBuild() {
   };
 
   try {
-    const data = await postJson("/api/reconstruct", body);
+    const data = await api("reconstruct", body);
     state.jobId = data.job_id;
     history.replaceState(null, "", `#job=${data.job_id}`);
     pollJob();
@@ -423,7 +380,7 @@ function pollJob() {
   const tick = async () => {
     try {
       const logLines = logDetails.open ? 120 : 0;
-      const job = await apiJson(`/api/jobs/${state.jobId}?log=${logLines}`);
+      const job = await api("job", state.jobId, logLines);
       updateProgress(job);
       if (job.status === "done") {
         stopPolling();
@@ -508,7 +465,7 @@ async function showResults(job) {
   resultsSection.classList.remove("hidden");
   $("#results-title").textContent = job.name || "Your model";
 
-  $("#report-html-link").href = `/api/jobs/${job.id}/report.html`;
+  viewReportBtn.dataset.jobId = job.id;
   pdfBtn.dataset.jobId = job.id;
   openFolderBtn.dataset.jobId = job.id;
 
@@ -527,14 +484,30 @@ async function showResults(job) {
   const outputs = result.outputs || {};
   $("#download-list").innerHTML = Object.entries(OUTPUT_INFO)
     .filter(([key]) => outputs[key])
-    .map(([key, info]) => `<a class="download-item" href="/api/jobs/${job.id}/files/${outputs[key]}?download=true" download>
+    .map(([key, info]) => `<button class="download-item" type="button" data-file="${escapeHtml(outputs[key])}">
         <span class="download-ext">${info.ext}</span>
         <span class="download-text"><span class="download-name">${info.name}</span><span class="download-desc">${info.desc}</span></span>
-      </a>`)
-    .join("") + `<a class="download-item" href="/api/jobs/${job.id}/report.json" download>
+      </button>`)
+    .join("") + `<button class="download-item" type="button" data-report="json">
         <span class="download-ext">JSON</span>
         <span class="download-text"><span class="download-name">Report data</span><span class="download-desc">Stats, settings, cameras</span></span>
-      </a>`;
+      </button>`;
+  // each one asks where to save through the operating system's Save dialog, then copies the file there
+  $("#download-list").querySelectorAll(".download-item").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const data = btn.dataset.report
+          ? await api("save_report", job.id, btn.dataset.report)
+          : await api("save_output", job.id, btn.dataset.file);
+        if (data.path) $("#workspace-path").textContent = `Saved ${data.path}`;
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    })
+  );
   $("#workspace-path").textContent = `Saved in ${result.workspace}`;
 
   resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -550,11 +523,11 @@ async function loadViewer(jobId, outputs, cameras) {
       state.viewer = createViewer($("#viewer-canvas"));
       wireViewerToolbar();
     }
-    const info = await state.viewer.load({
-      meshUrl: outputs.mesh_glb ? `/api/jobs/${jobId}/files/${outputs.mesh_glb}` : null,
-      pointsUrl: outputs.points_glb ? `/api/jobs/${jobId}/files/${outputs.points_glb}` : null,
-      cameras,
-    });
+    const [meshGlb, pointsGlb] = await Promise.all([
+      outputs.mesh_glb ? readOutput(jobId, outputs.mesh_glb) : null,
+      outputs.points_glb ? readOutput(jobId, outputs.points_glb) : null,
+    ]);
+    const info = await state.viewer.load({ meshGlb, pointsGlb, cameras });
     document.querySelector('[data-show="mesh"]').disabled = !info.hasMesh;
     document.querySelectorAll("[data-shade]").forEach((b) => (b.disabled = !info.hasMesh));
     setActive("[data-show]", info.hasMesh ? "mesh" : "points", "show");
@@ -597,6 +570,17 @@ function wireViewerToolbar() {
 }
 
 // ---------- report / folder ----------
+const viewReportBtn = $("#report-view-btn");
+viewReportBtn.addEventListener("click", async () => {
+  const jobId = viewReportBtn.dataset.jobId;
+  if (!jobId) return;
+  try {
+    await api("view_report", jobId); // opens in its own window
+  } catch (e) {
+    showError(e.message);
+  }
+});
+
 const pdfBtn = $("#report-pdf-btn");
 pdfBtn.addEventListener("click", async () => {
   const jobId = pdfBtn.dataset.jobId;
@@ -605,26 +589,10 @@ pdfBtn.addEventListener("click", async () => {
   pdfBtn.disabled = true;
   pdfBtn.textContent = "Preparing PDF…";
   try {
-    const res = await fetch(`/api/jobs/${jobId}/report.pdf`);
-    if (res.status === 501) {
-      // no Edge/Chrome to render it: open the report with the print dialog, where "Save as PDF" works
-      window.open(`/api/jobs/${jobId}/report.html?print=1`, "_blank", "noopener");
-      return;
-    }
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: "PDF export failed" }));
-      throw new Error(err.detail || "PDF export failed");
-    }
-    const disposition = res.headers.get("Content-Disposition") || "";
-    const name = /filename="([^"]+)"/.exec(disposition)?.[1] || `model-forge-report-${jobId}.pdf`;
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    // renders with headless Edge/Chrome, then asks where to save. With neither installed, the report
+    // opens with the print dialog instead, where "Save as PDF" works.
+    const data = await api("save_report", jobId, "pdf");
+    if (data.path) $("#workspace-path").textContent = `Saved ${data.path}`;
   } catch (e) {
     showError(e.message);
   } finally {
@@ -638,7 +606,7 @@ openFolderBtn.addEventListener("click", async () => {
   const jobId = openFolderBtn.dataset.jobId;
   if (!jobId) return;
   try {
-    await postJson(`/api/jobs/${jobId}/open-folder`);
+    await api("open_folder", jobId);
   } catch (e) {
     showError(e.message);
   }
@@ -648,10 +616,10 @@ openFolderBtn.addEventListener("click", async () => {
 loadHealth();
 renderMedia();
 
-// #job=<id> reopens a build (so refreshing the page mid-run, or after it, keeps your place)
+// #job=<id> reopens a build (so reloading the window mid-run, or after it, keeps your place)
 const resumeId = /job=([0-9a-f]+)/.exec(location.hash)?.[1];
 if (resumeId) {
-  apiJson(`/api/jobs/${resumeId}`)
+  api("job", resumeId)
     .then((job) => {
       state.jobId = resumeId;
       if (job.status === "done") {

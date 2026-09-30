@@ -14,6 +14,8 @@ from typing import Callable, Optional
 
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
+# The packaged app has no console, so on Windows every child process would otherwise flash one up.
+NO_WINDOW: dict = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 class ToolError(RuntimeError):
@@ -50,8 +52,7 @@ _help_cache: dict[str, str] = {}
 
 def _run_sync(args: list[str], timeout: float = 30) -> str:
     try:
-        proc = subprocess.run(args, capture_output=True, timeout=timeout,
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        proc = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, timeout=timeout, **NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ToolError(f"Could not run {args[0]}: {exc}") from exc
     return (proc.stdout + proc.stderr).decode("utf-8", "replace")
@@ -92,8 +93,7 @@ def _kill_tree(proc: asyncio.subprocess.Process) -> None:
         return
     try:
         if os.name == "nt":  # COLMAP.bat runs colmap.exe as a child of cmd.exe
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, **NO_WINDOW)
         else:
             os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, ProcessLookupError):
@@ -110,11 +110,7 @@ async def run_process(
 ) -> str:
     """Runs a program, feeding each output line to on_line. Returns the tail of its output.
     Raises ToolError on a non-zero exit and Cancelled if cancel_event is set meanwhile."""
-    kwargs: dict = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    else:
-        kwargs["start_new_session"] = True
+    kwargs: dict = dict(NO_WINDOW) if os.name == "nt" else {"start_new_session": True}
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -201,7 +197,8 @@ async def probe(path: str) -> dict:
     args = [FFPROBE_BIN, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path]
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL, **NO_WINDOW,
         )
     except OSError as exc:
         raise ToolError(f"Could not run ffprobe: {exc}") from exc

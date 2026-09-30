@@ -11,6 +11,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .tools import NO_WINDOW
+
 
 class PdfUnavailable(RuntimeError):
     """No Chromium-based browser was found to render the PDF."""
@@ -90,8 +92,10 @@ async def html_to_pdf(html: str, timeout: float = 90.0) -> bytes:
         proc = await asyncio.create_subprocess_exec(
             browser,
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            **NO_WINDOW,
         )
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
