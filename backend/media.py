@@ -108,7 +108,8 @@ async def thumbnail(path: str, size: int = 240) -> bytes:
     args += ["-i", str(p), "-frames:v", "1",
              "-vf", f"scale={size}:{size}:force_original_aspect_ratio=increase,crop={size}:{size}",
              "-q:v", "5", "-f", "image2", "-c:v", "mjpeg", "pipe:1"]
-    proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                stdin=asyncio.subprocess.DEVNULL, **tools.NO_WINDOW)
     out, err = await proc.communicate()
     if proc.returncode != 0 or not out:
         raise tools.ToolError(err.decode("utf-8", "replace").strip() or "Could not make a thumbnail")

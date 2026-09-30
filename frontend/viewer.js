@@ -72,9 +72,9 @@ export function createViewer(canvas) {
     return found;
   }
 
-  async function loadGlb(url) {
-    const gltf = await new GLTFLoader().loadAsync(url);
-    return gltf;
+  // the page is a file:// document with no server behind it, so GLBs arrive as ArrayBuffers from the backend
+  function parseGlb(buffer) {
+    return new GLTFLoader().parseAsync(buffer, "");
   }
 
   function clear() {
@@ -149,11 +149,11 @@ export function createViewer(canvas) {
   }
 
   return {
-    async load({ meshUrl, pointsUrl, cameras }) {
+    async load({ meshGlb, pointsGlb, cameras }) {
       clear();
       const [meshGltf, pointsGltf] = await Promise.all([
-        meshUrl ? loadGlb(meshUrl) : null,
-        pointsUrl ? loadGlb(pointsUrl) : null,
+        meshGlb ? parseGlb(meshGlb) : null,
+        pointsGlb ? parseGlb(pointsGlb) : null,
       ]);
       if (meshGltf) {
         mesh = firstDrawable(meshGltf, "isMesh");

@@ -1,15 +1,24 @@
 # Model Forge
 
-A local web app that turns photos and/or videos of an object into a coloured 3D model. It uses
+A desktop application that turns photos and/or videos of an object into a coloured 3D model. It uses
 [COLMAP](https://colmap.github.io/) for photogrammetry (working out where every shot was taken, then building a
-point cloud and a mesh) and `ffmpeg` to pull frames out of videos. Results can be viewed in the browser,
+point cloud and a mesh) and `ffmpeg` to pull frames out of videos. Results can be viewed in the app,
 exported as **GLB, OBJ or PLY**, and summarised in an HTML/PDF report.
 
-It's the sibling of [Frame Guard](../README.md): the same local FastAPI + vanilla JS setup, the same look.
+It opens in its own native window, using the operating system's web engine through
+[pywebview](https://pywebview.flowrl.com/) (Edge WebView2 on Windows, WebKit on macOS, WebKitGTK or Qt on
+Linux). **No web server runs and no network port is opened**: the window's JavaScript calls the Python
+backend directly. It's the sibling of [Quick Capture](../Quick-Capture/README.md) and
+[Frame Guard](../README.md): the same vanilla HTML/CSS/JS, the same look, no build step.
 
 ## Requirements
 
 - Python 3.10+
+- A system web engine:
+  - Windows 10/11: Edge WebView2, which is already installed.
+  - macOS: nothing extra.
+  - Linux: GTK and WebKit2GTK (e.g. `sudo apt install python3-gi gir1.2-webkit2-4.1`), or
+    `pip install "pywebview[qt]"`.
 - **COLMAP 3.8 or newer**, on your `PATH` or pointed to by `COLMAP_BIN`.
   On Windows, download the release zip from <https://github.com/colmap/colmap/releases> (pick the `cuda`
   build if you have an NVIDIA GPU), unzip it, and set `COLMAP_BIN` to the `COLMAP.bat` inside:
@@ -26,13 +35,35 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Run
+## Run from source
 
 ```bash
-.venv\Scripts\python.exe run.py
+.venv\Scripts\python.exe app.py
 ```
 
-Then open http://localhost:8757 (Frame Guard uses 8756, so both can run at once).
+Pass `--debug` to enable the web inspector.
+
+## Build a standalone app
+
+```bash
+python -m pip install pyinstaller
+python -m PyInstaller --clean ModelForge.spec
+```
+
+This builds a single file, `dist/ModelForge.exe` (`dist/ModelForge` on Linux/macOS), with the Model Forge
+icon. It runs on another machine without Python installed. COLMAP and ffmpeg are **not** bundled; the app finds
+them on `PATH` (or through `COLMAP_BIN` / `FFMPEG_BIN` / `FFPROBE_BIN`) just as it does from source. Each launch
+unpacks the app to a temp folder first, so it takes a second or two to open.
+
+- **Windows:** run `ModelForge.exe`. Pin it to the Start menu or taskbar like any other program.
+- **macOS:** run `dist/ModelForge`.
+- **Linux:** copy `dist/ModelForge` and `modelforge.png` to `/opt/ModelForge/`, then install
+  `model-forge.desktop` into `~/.local/share/applications/`.
+
+The icon lives in `modelforge.ico` (every Windows size, 16–256 px) and `modelforge.png` (1024 px). To use a
+different one, replace those two files and rebuild.
+
+PyInstaller builds for the OS it runs on, so build the Windows `.exe` on Windows.
 
 ## Taking good photos
 
@@ -85,23 +116,26 @@ Each build gets a folder in `~/ModelForge/` (override with `MODEL_FORGE_WORKSPAC
 
 ### Other details
 
-- **Picking files** (`backend/native_dialog.py`): as in Frame Guard, **Add files…** and **Add folder…** ask the
-  local server to show the operating system's own dialog (via Tk), since browsers hide real paths. If that
-  can't be shown, an in-page browser (`backend/file_browser.py`) is used instead. You can also paste a path.
+- **Picking files**: **Add files…** and **Add folder…** open the operating system's own dialog, attached to
+  the app window. You can also paste a path.
 - **Viewer** (`frontend/viewer.js`): three.js (vendored in `frontend/vendor/three`, MIT) with mesh/point
-  toggles, colour/clay/wireframe shading, and markers showing where each photo was taken.
+  toggles, colour/clay/wireframe shading, and markers showing where each photo was taken. With no server to
+  fetch from, the GLBs reach it through the bridge in 4 MiB pieces.
+- **Saving**: each model file, and the report as PDF or JSON, is saved through the operating system's Save
+  dialog. **Open folder** shows the build's `output/` folder.
 - **Reports** (`backend/report.py`): stats, front and side previews of the point cloud (inline SVG), time per
-  stage, settings, and which images were placed. "Download PDF" uses headless Edge/Chrome like Frame Guard
-  (`MODEL_FORGE_BROWSER` to override).
-- Refreshing the page keeps your place: the build's id is in the URL (`#job=…`). Builds run one at a time,
-  since COLMAP uses every core. Jobs live in memory, so restarting the server forgets them, but files stay on disk.
+  stage, settings, and which images were placed. **View Report** opens it in its own window. **Save PDF** uses
+  headless Edge/Chrome like Frame Guard (`MODEL_FORGE_BROWSER` to override). Without either, the report opens
+  with the print dialog, where "Save as PDF" works.
+- Reloading the window keeps your place: the build's id is in the URL (`#job=…`). Builds run one at a time,
+  since COLMAP uses every core. Jobs live in memory, so closing the app forgets them, but files stay on disk.
 
 ## Project structure
 
 ```
 model-forge/
 ├── backend/
-│   ├── main.py           FastAPI app & routes
+│   ├── api.py            the methods the window calls (window.pywebview.api.*), with input validation
 │   ├── pipeline.py       reconstruction stages, progress, presets
 │   ├── tools.py          finding/running COLMAP, ffmpeg, ffprobe
 │   ├── media.py          photo/video handling, frame extraction, thumbnails
@@ -109,10 +143,11 @@ model-forge/
 │   ├── geometry.py       PLY I/O, normals, clean-up, GLB/OBJ export
 │   ├── jobs.py           background job manager (progress, cancel)
 │   ├── report.py         HTML/JSON report generation
-│   ├── pdf_export.py     HTML report -> PDF via headless Edge/Chrome
-│   ├── native_dialog.py  native OS file/folder dialogs
-│   └── file_browser.py   fallback in-page directory listing
-├── frontend/             vanilla HTML/CSS/JS UI + three.js viewer
-├── run.py                entry point (uvicorn, port 8757)
+│   └── pdf_export.py     HTML report -> PDF via headless Edge/Chrome
+├── frontend/             vanilla HTML/CSS/JS UI + three.js viewer; styles.css + fonts/ are the shared tool style kit
+├── app.py                entry point: opens the native window (no server, no port)
+├── ModelForge.spec       PyInstaller one-file build
+├── modelforge.ico/.png   the app icon
+├── model-forge.desktop   Linux menu launcher
 └── requirements.txt
 ```

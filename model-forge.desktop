@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Model Forge
+Comment=Turn photos and videos of an object into a 3D model
+# Edit the paths to where you unpacked the build.
+Exec=/opt/ModelForge/ModelForge
+Icon=/opt/ModelForge/modelforge.png
+Terminal=false
+Categories=Graphics;3DGraphics;

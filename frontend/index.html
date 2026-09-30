@@ -4,12 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Model Forge</title>
-<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="styles.css" />
 <script type="importmap">
 {
   "imports": {
-    "three": "/static/vendor/three/three.module.min.js",
-    "three/addons/": "/static/vendor/three/addons/"
+    "three": "./vendor/three/three.module.min.js",
+    "three/addons/": "./vendor/three/addons/"
   }
 }
 </script>
@@ -18,7 +18,7 @@
 
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="/">
+    <a class="brand" href="#">
       <span class="brand-mark">MF</span>
       <span class="brand-text">Model Forge</span>
     </a>
@@ -33,7 +33,7 @@
 
 <main class="wrap">
   <section class="hero">
-    <p class="hero-eyebrow">TOOL‑006 · running locally, your photos never leave this machine</p>
+    <p class="hero-eyebrow">MF ·running locally, your photos never leave this machine</p>
     <h1>Model Forge</h1>
     <p class="lede">Walk around an object with your camera, then turn the photos or video into a 3D model. COLMAP works out where every shot was taken and builds a coloured mesh you can spin, measure up and export.</p>
     <div class="env-chips" id="env-chips"><span class="chip">Checking tools…</span></div>
@@ -159,8 +159,8 @@
     <div class="results-header">
       <h2 id="results-title">Your model</h2>
       <div class="report-actions">
-        <a id="report-html-link" class="btn btn-primary report-btn" target="_blank" rel="noopener"><span class="btn-icon" aria-hidden="true">↗</span>View Report</a>
-        <button id="report-pdf-btn" class="btn report-btn" type="button">Download PDF</button>
+        <button id="report-view-btn" class="btn btn-primary report-btn" type="button"><span class="btn-icon" aria-hidden="true">↗</span>View Report</button>
+        <button id="report-pdf-btn" class="btn report-btn" type="button">Save PDF</button>
         <button id="open-folder-btn" class="btn report-btn" type="button">Open folder</button>
       </div>
     </div>
@@ -200,25 +200,10 @@
 <footer class="site-footer">
   <div class="wrap">
     <span>Model Forge · a <a href="https://harrylsmallwood.com/tools" target="_blank" rel="noopener">Harry Smallwood tool</a></span>
-    <span class="mono">127.0.0.1:8757</span>
+    <span class="mono">desktop · offline</span>
   </div>
 </footer>
 
-<div id="browse-modal" class="modal hidden">
-  <div class="modal-content">
-    <div class="modal-header">
-      <span id="browse-modal-title">Add photos or videos</span>
-      <button id="browse-modal-close" class="modal-close" aria-label="Close">&times;</button>
-    </div>
-    <div class="modal-toolbar">
-      <button id="browse-up-btn" class="btn" title="Up one level">&uarr; Up</button>
-      <span id="browse-current-path" class="current-path"></span>
-      <button id="browse-add-folder-btn" class="btn btn-primary" disabled>Add this folder</button>
-    </div>
-    <div id="browse-entries" class="browse-entries"></div>
-  </div>
-</div>
-
-<script type="module" src="/static/app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

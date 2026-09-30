@@ -986,9 +986,13 @@ select:focus {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
+  font: inherit;
+  text-align: left;
   text-decoration: none;
+  cursor: pointer;
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
+.download-item:disabled { opacity: 0.6; cursor: progress; }
 .download-item:hover { color: var(--text); border-color: var(--accent); background: rgba(232, 121, 59, 0.07); }
 .download-ext {
   display: inline-grid;
@@ -1011,16 +1015,6 @@ select:focus {
   color: var(--text-faint);
   word-break: break-all;
 }
-
-/* ---------- browse modal extras ---------- */
-.modal-toolbar .btn-primary { margin-left: auto; }
-.browse-entry .kind {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  color: var(--accent-2);
-  text-transform: uppercase;
-}
-.browse-entry.added { opacity: 0.5; }
 
 @media (max-width: 860px) {
   .controls-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
